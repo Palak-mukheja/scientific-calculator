@@ -112,7 +112,7 @@ app.get('/api/db-test', async (req, res) => {
 
 
 // Start the server
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.post('/api/calculate', async (req, res) => {
 
@@ -250,6 +250,6 @@ app.delete('/api/history', async (req, res) => {
 
 
 
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
 });
