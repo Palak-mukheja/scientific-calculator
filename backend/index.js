@@ -4,11 +4,49 @@ const express = require('express');
 const cors = require('cors');
 const { create, all } = require('mathjs');
 const app = express();
+const { syncCalculationsToSheet } = require('./googleSheets');
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
+
+
+async function syncSheetSafely() {
+
+    console.log('Starting Google Sheets synchronization...');
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+
+        try {
+
+            await syncCalculationsToSheet();
+
+            console.log('Google Sheets sync successful');
+
+            return true;
+
+        } catch (error) {
+
+            console.error(
+                `Google Sheets sync attempt ${attempt} failed:`,
+                error.message
+            );
+
+            if (attempt < 3) {
+                await new Promise(resolve =>
+                    setTimeout(resolve, attempt * 1000)
+                );
+            }
+
+        }
+
+    }
+
+    console.error('Google Sheets sync failed after 3 attempts');
+
+    return false;
+}
 
 const rad = create(all);
 const deg = create(all);
@@ -114,7 +152,12 @@ app.get('/api/db-test', async (req, res) => {
 // Start the server
 const PORT = process.env.PORT || 5000;
 
-app.post('/api/calculate', async (req, res) => {
+
+    app.post('/api/calculate', async (req, res) => {
+
+    console.log('CALCULATE ROUTE HIT');
+
+    // 1. Validate the expression
 
     const { expression, angleMode = 'deg' } = req.body || {};
 
@@ -152,16 +195,23 @@ app.post('/api/calculate', async (req, res) => {
 
     // 5. Store the calculation in PostgreSQL
     try {
-        const { rows } = await pool.query(
-            `INSERT INTO calculations
-             (expression, result, angle_mode)
-             VALUES ($1, $2, $3)
-             RETURNING *`,
-            [expression, result, angleMode]
-        );
+const { rows } = await pool.query(
+    `INSERT INTO calculations
+     (expression, result, angle_mode)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    [expression, result, angleMode]
+);
 
-        // 6. Send the result back
-        res.status(201).json(rows[0]);
+// Synchronise Google Sheets
+const sheetSynced = await syncSheetSafely();
+
+// Return calculation and sync status
+res.status(201).json({
+    ...rows[0],
+    sheet_synced: sheetSynced
+});
+
 
     } catch (error) {
         console.error('Database error:', error.message);
@@ -196,7 +246,6 @@ app.delete('/api/history/:id', async (req, res) => {
 
     const id = Number(req.params.id);
 
-    // Validate ID
     if (!Number.isInteger(id) || id <= 0) {
         return res.status(400).json({
             error: 'Invalid calculation ID'
@@ -215,8 +264,11 @@ app.delete('/api/history/:id', async (req, res) => {
             });
         }
 
+        const sheetSynced = await syncSheetSafely();
+
         res.status(200).json({
-            message: 'Calculation deleted successfully'
+            message: 'Calculation deleted successfully',
+            sheet_synced: sheetSynced
         });
 
     } catch (error) {
@@ -228,6 +280,7 @@ app.delete('/api/history/:id', async (req, res) => {
     }
 });
 
+
 app.delete('/api/history', async (req, res) => {
 
     try {
@@ -235,20 +288,21 @@ app.delete('/api/history', async (req, res) => {
             'TRUNCATE TABLE calculations RESTART IDENTITY'
         );
 
+        const sheetSynced = await syncSheetSafely();
+
         res.status(200).json({
-            message: 'Calculation history cleared successfully'
+            message: 'Calculation history cleared successfully',
+            sheet_synced: sheetSynced
         });
 
     } catch (error) {
         console.error('Clear history error:', error.message);
 
         res.status(500).json({
-            error: 'Could not clear history'
+            error: 'Could not clear calculation history'
         });
     }
 });
-
-
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
