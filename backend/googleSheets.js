@@ -3,30 +3,39 @@ const { google } = require('googleapis');
 const pool = require('./db');
 
 // Authenticate using the Google service account
+
 function getGoogleSheetsClient() {
 
-    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+    const clientEmail = process.env.GOOGLE_CLIENT_EMAIL?.trim();
 
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(
-        /\\n/g,
-        '\n'
-    );
+    const rawPrivateKey = process.env.GOOGLE_PRIVATE_KEY;
+
+    const privateKey = rawPrivateKey
+        ?.trim()
+        .replace(/^["']|["']$/g, '')
+        .replace(/\\n/g, '\n')
+        .replace(/\r\n/g, '\n');
 
     if (!clientEmail || !privateKey) {
         throw new Error('Google credentials are missing');
     }
 
-    const auth = new google.auth.GoogleAuth({
+    // Validate that the environment variable contains a complete PEM key
+    if (
+        !privateKey.startsWith('-----BEGIN PRIVATE KEY-----') ||
+        !privateKey.trim().endsWith('-----END PRIVATE KEY-----')
+    ) {
+        throw new Error(
+            'Invalid GOOGLE_PRIVATE_KEY format. Check the service account private_key value.'
+        );
+    }
 
-        credentials: {
-            client_email: clientEmail,
-            private_key: privateKey
-        },
-
+    const auth = new google.auth.JWT({
+        email: clientEmail,
+        key: privateKey,
         scopes: [
             'https://www.googleapis.com/auth/spreadsheets'
         ]
-
     });
 
     return google.sheets({
@@ -34,6 +43,7 @@ function getGoogleSheetsClient() {
         auth
     });
 }
+
 
 
 // Synchronise Neon database with Google Sheets
